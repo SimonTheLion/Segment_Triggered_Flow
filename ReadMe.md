@@ -51,7 +51,7 @@ For security, API credentials and other constants are stored in `constants.json`
 }
 ```
 
-Replace the placeholders with your actual Klaviyo credentials.
+Replace the placeholders with your actual Klaviyo credentials, and segment name and ID.
 
 ### 4. Running the Script
 
