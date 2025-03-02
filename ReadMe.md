@@ -9,6 +9,7 @@ This script fetches the members of a specific segment from Klaviyo and maintains
 - Fetches profiles from a specified Klaviyo segment.
 - Maintains a local cache of segment members.
 - Sends an event to Klaviyo when a profile joins or leaves the segment.
+- Stores and update a custom property when a profile joins or leaves the segment.
 - Stores API credentials and segment details in a separate constants file for security.
 - Uses logging to track script execution and errors.
 
@@ -51,7 +52,7 @@ For security, API credentials and other constants are stored in `constants.json`
 }
 ```
 
-Replace the placeholders with your actual Klaviyo credentials, and segment name and ID.
+Replace the placeholders with your actual Klaviyo credentials.
 
 ### 4. Running the Script
 
@@ -70,12 +71,12 @@ python script.py
 
 2. **Updating the Cache**
 
-   - If new profiles are found that are not in the cache, they are added, and an event is pushed to Klaviyo indicating they "Joined Segment."
+   - If new profiles are found that are not in the cache, they are added, and an event is pushed to Klaviyo indicating they "Joined Segment" and the property "Is in Segment" is appended to the profile with the name of the segment as the value.
    - The cache file is updated with the new profiles and a timestamp.
 
 3. **Removing Stale Profiles**
 
-   - If a profile is found in the cache but no longer in the segment, it is removed, and an event is pushed to Klaviyo indicating they "Left Segment."
+   - If a profile is found in the cache but no longer in the segment, it is removed, and an event is pushed to Klaviyo indicating they "Left Segment"  and the property "Is in Segment" is updated  to remove the name of the segment from its value.
    - The cache file is updated accordingly.
 
 4. **Logging**
