@@ -33,9 +33,7 @@ def fetch_profiles():
     }
     profiles = []
     
-    params = {
-        "page[size]": 100  # Fetch up to 100 profiles per page
-    }
+    params = {"page[size]": 100}  # Fetch up to 100 profiles per page
     while url:
         response = requests.get(url, headers=headers, params=params)
         if response.status_code == 200:
@@ -48,8 +46,8 @@ def fetch_profiles():
     
     return profiles
 
-def push_event_to_klaviyo(email, event_name):
-    """Send an event to Klaviyo for a specific email."""
+def push_event_to_klaviyo(email, event_name, is_joining):
+    """Send an event to Klaviyo and update the 'Is in Segment' property correctly."""
     url = "https://a.klaviyo.com/api/events"
     headers = {
         "Authorization": f"Klaviyo-API-Key {API_KEY}",
@@ -57,6 +55,13 @@ def push_event_to_klaviyo(email, event_name):
         "accept": "application/vnd.api+json",
         "revision": "2025-01-15"
     }
+
+    # Correct property update structure
+    patch_properties = {
+        "append": {"Is in Segment": [SEGMENT_NAME]} if is_joining else {},
+        "unappend": {"Is in Segment": [SEGMENT_NAME]} if not is_joining else {}
+    }
+
     payload = {
         "data": {
             "type": "event",
@@ -78,7 +83,10 @@ def push_event_to_klaviyo(email, event_name):
                     "data": {
                         "type": "profile",
                         "attributes": {
-                            "email": email
+                            "email": email,
+                            "meta": {
+                                "patch_properties": patch_properties
+                            }
                         }
                     }
                 }
@@ -89,7 +97,7 @@ def push_event_to_klaviyo(email, event_name):
     try:
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code == 202:
-            logging.info(f"Event '{event_name}' successfully sent for {email}")
+            logging.info(f"Event '{event_name}' successfully sent for {email} with profile update: {patch_properties}")
         else:
             logging.error(f"Failed to send event for {email}: {response.status_code}, {response.text}")
     except requests.RequestException as e:
@@ -107,7 +115,7 @@ def update_cache(profiles):
     if new_profiles:
         logging.info(f"New profiles added: {new_profiles}")
         for email in new_profiles:
-            push_event_to_klaviyo(email, "Joined Segment")
+            push_event_to_klaviyo(email, "Joined Segment", is_joining=True)
 
         cache["profiles"].extend(new_profiles)
         cache["last_updated"] = datetime.now(timezone.utc).isoformat()
@@ -130,17 +138,15 @@ def remove_stale_profiles(fetched_profiles):
     current_cached_profiles = set(cache.get("profiles", []))
     fetched_profiles_set = set(fetched_profiles)
 
-    # Profiles to be removed
     stale_profiles = current_cached_profiles - fetched_profiles_set
     if stale_profiles:
         logging.info(f"Stale profiles removed: {list(stale_profiles)}")
         for email in stale_profiles:
-            push_event_to_klaviyo(email, "Left Segment")
+            push_event_to_klaviyo(email, "Left Segment", is_joining=False)
 
         cache["profiles"] = list(current_cached_profiles - stale_profiles)
         cache["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-        # Write updated cache back to the file
         with open(CACHE_FILE, "w") as f:
             json.dump(cache, f, indent=4)
         logging.info("Stale profiles removed and cache updated.")
