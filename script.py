@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Load constants from constants.json
 def load_constants():
@@ -24,8 +24,8 @@ SEGMENT_NAME = constants["SEGMENT_NAME"]
 CACHE_FILE = constants["CACHE_FILE"]
 
 def fetch_profiles():
-    """Fetch profiles from a Klaviyo Segment."""
-    url = f"https://a.klaviyo.com/api/segments/{SEGMENT_ID}/profiles"
+    """Fetch profiles from a Klaviyo Segment with pagination handling."""
+    base_url = f"https://a.klaviyo.com/api/segments/{SEGMENT_ID}/profiles"
     headers = {
         "Authorization": f"Klaviyo-API-Key {API_KEY}",
         "accept": "application/vnd.api+json",
@@ -33,9 +33,15 @@ def fetch_profiles():
     }
     profiles = []
     
-    params = {"page[size]": 100}  # Fetch up to 100 profiles per page
+    params = {"page[size]": 100}  # Only used for the first request
+    url = base_url  # Start with the base URL
+
     while url:
-        response = requests.get(url, headers=headers, params=params)
+        if url == base_url:
+            response = requests.get(url, headers=headers, params=params)  # Use params only on the first request
+        else:
+            response = requests.get(url, headers=headers)  # Do not pass params on paginated requests
+
         if response.status_code == 200:
             data = response.json()
             profiles.extend([p["attributes"]["email"] for p in data.get("data", [])])
@@ -43,7 +49,7 @@ def fetch_profiles():
         else:
             logging.error(f"Failed to fetch profiles: {response.status_code} - {response.text}")
             return []
-    
+
     return profiles
 
 def push_event_to_klaviyo(email, event_name, is_joining):
