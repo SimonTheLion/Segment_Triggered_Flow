@@ -24,36 +24,38 @@ SEGMENT_NAME = constants["SEGMENT_NAME"]
 CACHE_FILE = constants["CACHE_FILE"]
 
 def fetch_profiles():
-    """Fetch profiles from a Klaviyo Segment with pagination handling."""
+    """Fetch profiles from a Klaviyo Segment and return a dict of {profile_id: email}"""
     base_url = f"https://a.klaviyo.com/api/segments/{SEGMENT_ID}/profiles"
     headers = {
         "Authorization": f"Klaviyo-API-Key {API_KEY}",
         "accept": "application/vnd.api+json",
         "revision": "2025-01-15"
     }
-    profiles = []
-    
-    params = {"page[size]": 100}  # Only used for the first request
-    url = base_url  # Start with the base URL
+    profiles = {}
+    params = {"page[size]": 100}
+    url = base_url
 
     while url:
         if url == base_url:
-            response = requests.get(url, headers=headers, params=params)  # Use params only on the first request
+            response = requests.get(url, headers=headers, params=params)
         else:
-            response = requests.get(url, headers=headers)  # Do not pass params on paginated requests
+            response = requests.get(url, headers=headers)
 
         if response.status_code == 200:
             data = response.json()
-            profiles.extend([p["attributes"]["email"] for p in data.get("data", [])])
-            url = data.get("links", {}).get("next")  # Get the next page URL
+            for p in data.get("data", []):
+                profile_id = p["id"]
+                email = p["attributes"].get("email", "unknown@example.com")
+                profiles[profile_id] = email
+            url = data.get("links", {}).get("next")
         else:
             logging.error(f"Failed to fetch profiles: {response.status_code} - {response.text}")
-            return []
+            return {}
 
     return profiles
 
-def push_event_to_klaviyo(email, event_name, is_joining):
-    """Send an event to Klaviyo and update the 'Is in Segment' property correctly."""
+def push_event_to_klaviyo(profile_id, event_name, is_joining):
+    """Send an event to Klaviyo and update the 'Is in Segment' property."""
     url = "https://a.klaviyo.com/api/events"
     headers = {
         "Authorization": f"Klaviyo-API-Key {API_KEY}",
@@ -62,7 +64,6 @@ def push_event_to_klaviyo(email, event_name, is_joining):
         "revision": "2025-01-15"
     }
 
-    # Correct property update structure
     patch_properties = {
         "append": {"Is in Segment": [SEGMENT_NAME]} if is_joining else {},
         "unappend": {"Is in Segment": [SEGMENT_NAME]} if not is_joining else {}
@@ -88,8 +89,8 @@ def push_event_to_klaviyo(email, event_name, is_joining):
                 "profile": {
                     "data": {
                         "type": "profile",
+                        "id": profile_id,
                         "attributes": {
-                            "email": email,
                             "meta": {
                                 "patch_properties": patch_properties
                             }
@@ -103,13 +104,13 @@ def push_event_to_klaviyo(email, event_name, is_joining):
     try:
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code == 202:
-            logging.info(f"Event '{event_name}' successfully sent for {email} with profile update: {patch_properties}")
+            logging.info(f"Event '{event_name}' sent for profile ID {profile_id}")
         else:
-            logging.error(f"Failed to send event for {email}: {response.status_code}, {response.text}")
+            logging.error(f"Failed to send event for {profile_id}: {response.status_code}, {response.text}")
     except requests.RequestException as e:
-        logging.error(f"Error sending event for {email}: {e}")
+        logging.error(f"Error sending event for {profile_id}: {e}")
 
-def update_cache(profiles):
+def update_cache(fetched_profiles):
     """Update the local cache with new profiles."""
     try:
         with open(CACHE_FILE, "r") as f:
@@ -117,13 +118,16 @@ def update_cache(profiles):
     except (FileNotFoundError, json.JSONDecodeError):
         cache = {"profiles": [], "last_updated": None}
 
-    new_profiles = list(set(profiles) - set(cache["profiles"]))
-    if new_profiles:
-        logging.info(f"New profiles added: {new_profiles}")
-        for email in new_profiles:
-            push_event_to_klaviyo(email, "Joined Segment", is_joining=True)
+    cached_ids = set(cache.get("profiles", []))
+    fetched_ids = set(fetched_profiles.keys())
 
-        cache["profiles"].extend(new_profiles)
+    new_profile_ids = list(fetched_ids - cached_ids)
+    if new_profile_ids:
+        logging.info(f"New profiles added: {new_profile_ids}")
+        for profile_id in new_profile_ids:
+            push_event_to_klaviyo(profile_id, "Joined Segment", is_joining=True)
+
+        cache["profiles"].extend(new_profile_ids)
         cache["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         with open(CACHE_FILE, "w") as f:
@@ -141,16 +145,16 @@ def remove_stale_profiles(fetched_profiles):
         logging.warning("Cache file not found or invalid. Skipping stale profile removal.")
         return
 
-    current_cached_profiles = set(cache.get("profiles", []))
-    fetched_profiles_set = set(fetched_profiles)
+    cached_ids = set(cache.get("profiles", []))
+    fetched_ids = set(fetched_profiles.keys())
 
-    stale_profiles = current_cached_profiles - fetched_profiles_set
-    if stale_profiles:
-        logging.info(f"Stale profiles removed: {list(stale_profiles)}")
-        for email in stale_profiles:
-            push_event_to_klaviyo(email, "Left Segment", is_joining=False)
+    stale_profile_ids = list(cached_ids - fetched_ids)
+    if stale_profile_ids:
+        logging.info(f"Stale profiles removed: {stale_profile_ids}")
+        for profile_id in stale_profile_ids:
+            push_event_to_klaviyo(profile_id, "Left Segment", is_joining=False)
 
-        cache["profiles"] = list(current_cached_profiles - stale_profiles)
+        cache["profiles"] = list(cached_ids - set(stale_profile_ids))
         cache["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         with open(CACHE_FILE, "w") as f:
